@@ -1,0 +1,152 @@
+#!/bin/bash
+
+# Check if a file path is provided as an argument
+if [ "$#" -ne 1 ]; then
+    echo "Usage: $0 <mountpoints_file>"
+    exit 1
+fi
+
+mountpoints_file="$1"
+
+# Check if the file exists
+if [ ! -f "$mountpoints_file" ]; then
+    echo "File not found: $mountpoints_file"
+    exit 1
+fi
+
+# Initialize an empty mounts array
+declare -a mounts=()
+
+# Read mount points from the file and add them to the mounts array
+while IFS= read -r line; do
+    mounts+=("$line")
+done <"$mountpoints_file"
+
+# Logging function
+log() {
+    local type="$1" # Log type (ERROR or INFO)
+    local msg="$2"  # The log message
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [$type] $msg"
+}
+
+# Array to keep track of background process PIDs
+declare -a pids=()
+
+# Clean up function to unmount all mount points and kill background processes
+cleanup() {
+    log "INFO" "Cleanup: unmounting all SSHFS mounts and exiting..."
+
+    # Kill background processes
+    for pid in "${pids[@]}"; do
+        if kill -0 "$pid" 2>/dev/null; then
+            log "INFO" "Stopping background process $pid"
+            kill "$pid"
+        fi
+    done
+
+    # Unmount all SSHFS mounts
+    for mount_info in "${mounts[@]}"; do
+        IFS=':' read -r -a array <<<"$mount_info"
+        mount_point="${array[0]}"
+        if mount | grep -q "on $mount_point type fuse.sshfs"; then
+            fusermount -u "$mount_point" && log "INFO" "Unmounted $mount_point"
+        fi
+    done
+}
+
+# Function to check SSH key-based authentication, now with port
+check_ssh_key_auth() {
+    local userhost="$1"
+    local port="$2"
+
+    # Attempt to execute a non-interactive command (`exit`) on the remote server using the specified port
+    if ! ssh -o BatchMode=yes -o PasswordAuthentication=no -p "$port" "$userhost" exit; then
+        log "ERROR" "SSH key-based authentication to $userhost on port $port failed or requires a password."
+        cleanup # Call cleanup to unmount any mounted filesystems before exiting
+        exit 1
+    else
+        log "INFO" "SSH key-based authentication to $userhost on port $port successful."
+    fi
+}
+
+# Function to check and mount if necessary
+check_and_mount() {
+    local mount_point="$1"
+    local remote_dir_with_port="$2" # Now includes user@hostname and port
+    local port="$3"
+    local remote_path="$4"
+
+    # Extract just user@hostname for clearer logging, though check_ssh_key_auth will use full remote_dir_with_port
+    local ssh_dest="${remote_dir_with_port%:*}" # Assumes port is the last part after the last colon
+
+    log "INFO" "Checking SSH key-based authentication for $ssh_dest on port $port..."
+    # Call the SSH key-based authentication check, including port
+    check_ssh_key_auth "$remote_dir_with_port" "$port"
+
+    # Ensure the local directory exists
+    if [ ! -d "$mount_point" ]; then
+        log "INFO" "$mount_point does not exist, creating..."
+        mkdir -p "$mount_point"
+    fi
+
+    while true; do
+        # Check if the mount point is already mounted
+        if mount | grep -q "on $mount_point type fuse.sshfs"; then
+            log "INFO" "$mount_point is already mounted."
+        else
+            log "INFO" "Attempting to mount $mount_point..."
+            if sshfs -o reconnect,port="$port" "$remote_dir_with_port:$remote_path" "$mount_point"; then
+                log "INFO" "$mount_point mounted successfully."
+            else
+                log "ERROR" "Failed to mount $mount_point on port $port, retrying in 10 seconds..."
+                sleep 10
+                continue
+            fi
+        fi
+        sleep 10
+    done
+}
+
+# Trap SIGINT and SIGTERM
+trap cleanup SIGINT SIGTERM
+
+# Iterate over each mount point and handle in the background
+for mount in "${mounts[@]}"; do
+    # Parse the mount string to extract variables
+    IFS=':' read -r mountpoint userhost port remotedir <<<"$(echo "$mount" | sed -E 's/(.*):(.*@.*):([0-9]+):(.*)/\1:\2:\3:\4/')"
+
+    log "INFO" "Processing mount: $mountpoint"
+
+    # Check SSH key-based authentication using userhost and port
+    check_ssh_key_auth "$userhost" "$port"
+
+    # Ensure the local directory exists
+    if [ ! -d "$mountpoint" ]; then
+        log "INFO" "$mountpoint does not exist, creating..."
+        mkdir -p "$mountpoint"
+    fi
+
+    # Attempt to mount
+    while true; do
+        if mount | grep -q "on $mountpoint type fuse.sshfs"; then
+            log "INFO" "$mountpoint is already mounted."
+        else
+            log "INFO" "Attempting to mount $mountpoint..."
+            if sshfs -o reconnect -o port="$port" "$userhost:$remotedir" "$mountpoint"; then
+                log "INFO" "$mountpoint mounted successfully."
+            else
+                log "ERROR" "Failed to mount $mountpoint on port $port, retrying in 10 seconds..."
+                sleep 10
+                continue
+            fi
+        fi
+        sleep 10
+    done &
+    # Store the PID of the background process
+    pids+=("$!")
+done
+
+# Wait for all background processes to complete
+for pid in "${pids[@]}"; do
+    wait "$pid"
+done
