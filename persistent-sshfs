@@ -85,20 +85,18 @@ cleanup() {
     done
 }
 
-# Function to check SSH key-based authentication, now with port
+# Check SSH key-based authentication
 check_ssh_key_auth() {
     local userhost="$1"
     local port="$2"
 
     # Attempt to execute a non-interactive command (`exit`) on the remote server using the specified port
-    if ! ssh -o BatchMode=yes -o PasswordAuthentication=no -p "$port" "$userhost" exit; then
-        log "$LOG_LEVEL_ERROR" "SSH key-based authentication to $userhost on port $port failed or requires a password."
-        cleanup # Call cleanup to unmount any mounted filesystems before exiting
+    while ! ssh -o BatchMode=yes -o PasswordAuthentication=no -p "$port" "$userhost" exit; do
+        log "$LOG_LEVEL_ERROR" "SSH key-based authentication to $userhost on port $port failed or requires a password, retrying in 10 seconds..."
+        sleep 10
+    done
 
-        exit 1
-    else
-        log "$LOG_LEVEL_INFO" "SSH key-based authentication to $userhost on port $port successful."
-    fi
+    log "$LOG_LEVEL_INFO" "SSH key-based authentication to $userhost on port $port successful."
 }
 
 # Trap SIGINT and SIGTERM
@@ -111,29 +109,34 @@ for mount in "${mounts[@]}"; do
 
     log "$LOG_LEVEL_INFO" "Processing mount: $mountpoint"
 
-    # Check SSH key-based authentication using userhost and port
-    check_ssh_key_auth "$userhost" "$port"
-
     # Ensure the local directory exists
     if [ ! -d "$mountpoint" ]; then
         log "$LOG_LEVEL_INFO" "$mountpoint does not exist, creating..."
         mkdir -p "$mountpoint"
     fi
 
-    # Attempt to mount
-    while true; do
-        if mount | grep -q "on $mountpoint type fuse.sshfs"; then
-            log "$LOG_LEVEL_DEBUG" "$mountpoint is already mounted."
-        else
-            log "$LOG_LEVEL_INFO" "Attempting to mount $mountpoint..."
-            if sshfs -o reconnect -o port="$port" "$userhost:$remotedir" "$mountpoint"; then
-                log "$LOG_LEVEL_INFO" "$mountpoint mounted successfully."
+    # Launch a background process for each mount
+    (
+        # Check SSH key-based authentication using userhost and port
+        check_ssh_key_auth "$userhost" "$port"
+
+        # Attempt to mount, keep retrying if it fails
+        while true; do
+            if mount | grep -q "on $mountpoint type fuse.sshfs"; then
+                log "$LOG_LEVEL_DEBUG" "$mountpoint is already mounted."
+                break # Exit the loop if the mount is successful
             else
-                log "$LOG_LEVEL_ERROR" "Failed to mount $mountpoint on port $port, retrying in 10 seconds..."
+                log "$LOG_LEVEL_INFO" "Attempting to mount $mountpoint..."
+                if sshfs -o reconnect -o port="$port" "$userhost:$remotedir" "$mountpoint"; then
+                    log "$LOG_LEVEL_INFO" "$mountpoint mounted successfully."
+                    break # Exit the loop if the mount is successful
+                else
+                    log "$LOG_LEVEL_ERROR" "Failed to mount $mountpoint on port $port, retrying in 10 seconds..."
+                fi
             fi
-        fi
-        sleep 10
-    done &
+            sleep 10
+        done
+    ) &
     # Store the PID of the background process
     pids+=("$!")
 done
