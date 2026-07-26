@@ -1,6 +1,6 @@
 ---
 name: persistent-sshfs
-description: Bash tool that keeps SSHFS mounts alive — spawns one watchdog per mount, checks `mount | grep fuse.sshfs` on a loop, and remounts anything that dropped. Mounts are defined one-per-line in a plain-text mounts file (`local_dir:user@host:port:remote_dir`), no config format beyond that. Run it via `persistent-sshfs mounts.txt`, kept alive in the foreground under a `systemd` unit, a `cron @reboot` line, or a `tmux`/`screen` session — it blocks forever watching its background workers, so whatever runs it must not treat exit as success. Use when the user wants SSHFS mounts that survive dropped connections / auto-remount after a network blip / a persistent remote filesystem mount that doesn't need babysitting.
+description: Bash tool that brings up SSHFS mounts and retries the initial mount until it connects. Spawns one background worker per mount that waits for key-based SSH auth (retrying forever, no password fallback), then mounts with `sshfs -o reconnect`. IMPORTANT — it is NOT a live watchdog: each worker `break`s and exits once its mount is up, so once all mounts succeed the process exits 0 (it only blocks forever if a host's key auth never succeeds). Transient-drop survival comes from `sshfs -o reconnect` itself, not this script; nothing re-mounts a mount that fully dies unless you RUN THE SCRIPT AGAIN (its "mount whatever's currently down" logic makes re-running the real recovery mechanism — schedule it via cron/timer for that). Mounts are defined one-per-line in a plain-text file (`local_dir:user@host:port:remote_dir`), no other config. Use when the user wants SSHFS mounts brought up reliably at boot/login with retry-until-connected + sshfs reconnect for blips.
 homepage: https://github.com/psyb0t/persistent-sshfs
 user-invocable: true
 permissions:
@@ -13,9 +13,11 @@ metadata:
 
 # persistent-sshfs
 
-A bash script for the digital anarchist: it keeps your SSHFS mounts up. It checks whether each configured mount is alive, and if it's not, it remounts it — on a loop, forever, with the elegance of a cat walking across your keyboard.
+A bash script for the digital anarchist: it brings up your SSHFS mounts and keeps retrying the initial connection until each one is up, with the elegance of a cat walking across your keyboard.
 
-For install steps, the mounts-file syntax, and how to run it under cron/systemd/a loop, see [references/setup.md](references/setup.md).
+**What it actually does (read the code, not the marketing):** per mount, a background worker waits for key-based SSH auth to succeed (retrying every 10s, forever, no password fallback), then mounts once with `sshfs -o reconnect` and **exits its loop the moment the mount is up**. The ongoing "survive a dropped connection" behaviour is provided by `sshfs`'s own `-o reconnect` flag — *not* by this script. This script does **not** poll-and-remount in a loop after the initial mount, and it does **not** revive a mount that `sshfs` gives up on entirely. To get genuine remount-on-death you re-run the script (it mounts whatever is currently down and skips what's up) — so the real "keep it persistent" pattern is a cron job / systemd timer that re-runs it, not a single long-lived process.
+
+For install steps, the mounts-file syntax, and how to run/re-run it under cron/systemd, see [references/setup.md](references/setup.md).
 
 ## Security & Safety
 
@@ -27,9 +29,9 @@ This script mounts remote filesystems over SSH using **your** SSH keys, with **n
 
 ## When To Use
 
-- You have one or more remote directories you want mounted locally via SSHFS, and you're tired of `sshfs` silently dying on you after a network blip, VPN drop, laptop sleep, or SSH timeout.
-- You want a "set it and forget it" watchdog process (foreground, under `systemd`, `cron @reboot`, or a `tmux` session) that re-establishes mounts without you noticing they went down.
-- You're managing multiple SSHFS mounts to different hosts/ports and want them all supervised by one process instead of hand-rolling a retry loop per mount.
+- You have one or more remote directories you want mounted locally via SSHFS, and you want the initial mount to keep retrying until the host is reachable and key auth works (e.g. at boot before the network/VPN is up) instead of failing once and giving up.
+- You want `sshfs`'s built-in `-o reconnect` to ride out transient network blips, and — via a cron job / systemd timer that re-runs this script — to have any mount that fully died brought back automatically.
+- You're managing multiple SSHFS mounts to different hosts/ports and want them all brought up by one invocation instead of hand-rolling a mount-and-retry per mount.
 
 ## When NOT To Use
 
@@ -65,6 +67,11 @@ No YAML, no JSON — just that one line format, one mount per line. Blank/malfor
 persistent-sshfs mounts.txt
 ```
 
-This blocks in the foreground: it spawns one background worker per mount (each does key-auth-check, then an infinite mount-retry loop with a 10s backoff), then `wait`s on all of them. Ctrl-C (or `SIGTERM`) triggers `cleanup()`, which unmounts everything and kills the workers. It does not fork/daemonize itself — run it under something that keeps it alive (`systemd`, `cron @reboot` + `nohup`/`disown`, or a `tmux`/`screen` session). Set `LOG_LEVEL=DEBUG|INFO|ERROR` (default `INFO`) to control log verbosity.
+It spawns one background worker per mount. Each worker first blocks in `check_ssh_key_auth` (retries `ssh -o BatchMode=yes -o PasswordAuthentication=no` every 10s until key auth succeeds — forever, no password fallback), then enters a mount loop that retries `sshfs -o reconnect` every 10s **until the mount is up, at which point it `break`s and the worker exits.** The main process `wait`s on all workers — so:
 
-See [references/setup.md](references/setup.md) for install, the full env var, and concrete cron/systemd/loop recipes.
+- **Happy path:** every mount comes up, every worker exits, and the main process **exits 0**. It does *not* stay resident. The mounts persist because they're now real FUSE mounts (with `sshfs -o reconnect` handling blips), not because this process is still running.
+- **Degraded path:** if a host's key auth never succeeds, that worker loops in `check_ssh_key_auth` forever, so the main process never exits. That's the *only* reason it would "block forever".
+
+Because it self-terminates once mounted, the way to get ongoing remount-on-death is to **re-run it periodically** (cron/systemd timer): a fresh run re-mounts anything currently down and no-ops anything already up. `Ctrl-C`/`SIGTERM` on a still-running instance triggers `cleanup()` (unmount everything, kill workers). Set `LOG_LEVEL=DEBUG|INFO|ERROR` (default `INFO`) for verbosity.
+
+See [references/setup.md](references/setup.md) for install, the env var, and the cron/systemd-timer recipes that actually keep mounts persistent.

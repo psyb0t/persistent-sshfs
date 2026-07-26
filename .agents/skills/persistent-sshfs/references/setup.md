@@ -56,9 +56,11 @@ Runs in the **foreground**. Per mount it:
 
 1. Spawns a background subshell.
 2. Calls `check_ssh_key_auth` — retries `ssh -o BatchMode=yes -o PasswordAuthentication=no -p <port> <user@host> exit` every 10s until it succeeds. This blocks forever on bad/missing keys — it will never fall back to a password prompt.
-3. Enters an infinite loop: check `mount | grep "on $mountpoint type fuse.sshfs"`; if not mounted, run `sshfs -o reconnect -o port="$port" "$userhost:$remotedir" "$mountpoint"`; on failure, log and retry after 10s; on success, break out and let the mount ride (SSHFS's own `-o reconnect` handles transient drops — this script's loop is what catches it if `sshfs` gives up entirely and unmounts).
+3. Enters a retry loop: check `mount | grep "on $mountpoint type fuse.sshfs"`; if already mounted, `break` immediately; otherwise run `sshfs -o reconnect -o port="$port" "$userhost:$remotedir" "$mountpoint"`; on failure, log and retry after 10s; **on success, `break` and the worker exits.** The loop's only job is to get the mount up once. After that, transient drops are ridden out by `sshfs`'s own `-o reconnect` — **this script does not poll-and-remount, and does not revive a mount that `sshfs` abandons entirely.**
 
-The main process `wait`s on all per-mount background workers, so it never exits on its own. `SIGINT`/`SIGTERM` trigger `cleanup()`: kill all workers, `fusermount -u` every mount currently up.
+The main process `wait`s on all per-mount background workers. Since each worker exits as soon as its mount is up, **once every mount succeeds the workers all exit and the main process exits 0** — it does not stay resident. The only way it keeps running is if some host's key auth never succeeds (step 2 loops forever). `SIGINT`/`SIGTERM` on a still-running instance trigger `cleanup()`: kill all workers, `fusermount -u` every mount currently up.
+
+**Consequence for persistence:** because the process self-terminates once mounted, a single long-lived run is NOT a watchdog. To auto-remount a mount that later dies, **re-run the script** — a fresh run `break`s past whatever is still mounted and re-mounts only what's down. The persistence recipes below therefore use a **periodic re-run** (systemd timer / cron interval), not a single resident process.
 
 ## Environment Variables
 
@@ -68,48 +70,63 @@ The main process `wait`s on all per-mount background workers, so it never exits 
 
 No CLI flags exist beyond the single positional `<mountpoints_file>` argument — usage is enforced with `Usage: $0 <mountpoints_file>` if you call it wrong.
 
-## Keeping It Alive — Persistent Run Options
+## Keeping Mounts Persistent — Re-Run Recipes
 
-The script does not daemonize or fork itself. Pick one:
+The script mounts everything and then **exits** (see the runtime note above); it is not a resident daemon. So "persistence" = (a) get the mounts up at boot, and (b) re-run periodically to bring back any that died. `sshfs -o reconnect` covers the transient blips in between.
 
-### systemd (recommended)
+### systemd oneshot + timer (recommended)
+
+A `oneshot` service does the mounting; a `timer` re-runs it on an interval so a fully-dropped mount gets re-established.
 
 ```ini
 # /etc/systemd/system/persistent-sshfs.service
 [Unit]
-Description=persistent-sshfs mount watchdog
+Description=persistent-sshfs — mount/remount SSHFS mounts
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=oneshot
 ExecStart=/usr/local/bin/persistent-sshfs /home/bob/mounts.txt
 Environment=LOG_LEVEL=INFO
-Restart=on-failure
-RestartSec=5
 User=bob
+```
+
+```ini
+# /etc/systemd/system/persistent-sshfs.timer
+[Unit]
+Description=Re-run persistent-sshfs to remount anything that dropped
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=1min
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=timers.target
 ```
 
 ```sh
 sudo systemctl daemon-reload
-sudo systemctl enable --now persistent-sshfs
+sudo systemctl enable --now persistent-sshfs.timer
 journalctl -u persistent-sshfs -f
 ```
 
-### cron `@reboot`
+> Note: don't use `Type=simple` + `Restart=on-failure` here — the process exits **0** once mounts are up, so `on-failure` never fires and you'd get a single mount pass with no re-check. The timer is what makes it recurring. (If a host is *unreachable*, the run blocks in the auth-retry loop instead of exiting; set a `TimeoutStartSec=` on the service if you don't want a hung host to hold the oneshot open.)
+
+### cron — boot + interval
 
 ```sh
 crontab -e
 ```
 
 ```
-@reboot /usr/local/bin/persistent-sshfs /home/bob/mounts.txt >> /home/bob/persistent-sshfs.log 2>&1
+# bring mounts up at boot
+@reboot     /usr/local/bin/persistent-sshfs /home/bob/mounts.txt >> /home/bob/persistent-sshfs.log 2>&1
+# re-run every minute to remount anything that died (no-ops mounts already up)
+* * * * *   /usr/local/bin/persistent-sshfs /home/bob/mounts.txt >> /home/bob/persistent-sshfs.log 2>&1
 ```
 
-`@reboot` starts it once at boot; the script's own internal loop is what handles reconnects afterward. There's no cron-driven periodic re-check needed — the script IS the watchdog, cron just launches it.
+The `@reboot` line handles startup; the interval line is the actual remount-on-death mechanism, since the script exits after each pass. A run against already-up mounts returns almost immediately (each worker `break`s on "already mounted").
 
 ### tmux / screen (manual / interactive)
 
@@ -118,7 +135,7 @@ tmux new -d -s sshfs-mounts 'persistent-sshfs /home/bob/mounts.txt'
 tmux attach -t sshfs-mounts   # to watch logs
 ```
 
-Fine for a workstation you control interactively; use systemd or cron for anything that needs to survive a reboot unattended.
+Fine for a one-shot interactive bring-up on a workstation you're watching. Note it will still exit once mounts are up (or hang on an unreachable host) — for unattended survival across reboots and mount deaths, use the systemd timer or the cron interval above.
 
 ## Teardown
 
