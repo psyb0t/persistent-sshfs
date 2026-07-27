@@ -1,0 +1,11 @@
+{
+  "name": "persistent-sshfs",
+  "version": "1.0.4",
+  "description": "Bash tool that brings up SSHFS mounts and retries the initial connection until key-based SSH auth succeeds, then mounts with sshfs -o reconnect",
+  "author": { "name": "psyb0t", "url": "https://github.com/psyb0t" },
+  "homepage": "https://github.com/psyb0t/persistent-sshfs",
+  "repository": "https://github.com/psyb0t/persistent-sshfs",
+  "license": "WTFPL",
+  "keywords": ["sshfs", "ssh", "fuse", "mount", "remount", "reconnect", "cron", "systemd"],
+  "skills": "./skills/"
+}

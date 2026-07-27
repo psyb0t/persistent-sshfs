@@ -58,6 +58,35 @@ persistent-sshfs mounts.txt
 
 And behold as it tirelessly works to maintain your mounts, defying the very laws of connectivity and physics.
 
+## Agent integrations
+
+The [skill](.agents/skills/persistent-sshfs) works in any agent that reads `.agents/skills/`, and
+installs natively in the clients below.
+
+### Claude Code
+
+```bash
+claude plugin marketplace add psyb0t/agents
+claude plugin install persistent-sshfs@psyb0t
+```
+
+### Codex
+
+```bash
+codex plugin marketplace add psyb0t/agents
+```
+
+Codex also picks the skill up automatically in any repo containing `.agents/skills/`, and
+invokes it as `$persistent-sshfs`.
+
+### OpenClaw
+
+The skill is published to ClawHub on every release:
+
+```bash
+openclaw skills install @psyb0t/persistent-sshfs
+```
+
 ## Features
 
 - **Resurrection**: `persistent-sshfs` will continuously check and ensure that all specified mounts are alive and well, reviving any that have fallen.

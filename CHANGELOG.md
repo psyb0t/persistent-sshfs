@@ -2,6 +2,12 @@
 
 All notable changes per release.
 
+## [v1.0.4] — 2026-07-27
+
+### Added
+- Agent-integration manifests: `.agents/.claude-plugin/plugin.json` and `.agents/.codex-plugin/plugin.json`, making the existing `.agents/skills/persistent-sshfs` skill installable as a plugin in Claude Code and Codex via the `psyb0t/agents` marketplace.
+- `## Agent integrations` section in the README with the Claude Code, Codex, and OpenClaw install commands.
+
 ## [v1.0.3] — 2026-07-27
 
 ### Added
