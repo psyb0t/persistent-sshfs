@@ -1,5 +1,6 @@
 # persistent-sshfs
 
+[![CI](https://github.com/psyb0t/persistent-sshfs/actions/workflows/pipeline.yml/badge.svg?branch=master)](https://github.com/psyb0t/persistent-sshfs/actions/workflows/pipeline.yml)
 [![version](https://raw.githubusercontent.com/psyb0t/persistent-sshfs/badges/version.svg)](https://github.com/psyb0t/persistent-sshfs/releases)
 [![license](https://raw.githubusercontent.com/psyb0t/persistent-sshfs/badges/license.svg)](LICENSE)
 

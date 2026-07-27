@@ -2,6 +2,11 @@
 
 All notable changes per release.
 
+## [v1.0.3] — 2026-07-27
+
+### Added
+- Added a GitHub Actions CI status badge to the README.
+
 ## [v1.0.2] — 2026-07-27
 
 ### Added
