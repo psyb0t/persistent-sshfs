@@ -2,6 +2,12 @@
 
 All notable changes per release.
 
+## [v1.0.5] — 2026-07-27
+
+### Fixed
+- The Codex subsection of `## Agent integrations` was missing its install command — it told readers to add the `psyb0t/agents` marketplace and stopped. Added the missing line: `codex plugin add persistent-sshfs@psyb0t`.
+- Corrected the invocation prose, which conflated two different situations: installed via the marketplace, the skill is invoked as `$persistent-sshfs:persistent-sshfs`; picked up automatically (no install) from a repo's own `.agents/skills/`, it's invoked as plain `$persistent-sshfs`.
+
 ## [v1.0.4] — 2026-07-27
 
 ### Added

@@ -74,10 +74,12 @@ claude plugin install persistent-sshfs@psyb0t
 
 ```bash
 codex plugin marketplace add psyb0t/agents
+codex plugin add persistent-sshfs@psyb0t
 ```
 
-Codex also picks the skill up automatically in any repo containing `.agents/skills/`, and
-invokes it as `$persistent-sshfs`.
+Installed this way, Codex invokes the skill as `$persistent-sshfs:persistent-sshfs`. Codex also
+picks the skill up automatically with no install in any repo containing `.agents/skills/`, where
+it invokes as plain `$persistent-sshfs`.
 
 ### OpenClaw
 
