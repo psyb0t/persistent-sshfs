@@ -2,6 +2,11 @@
 
 All notable changes per release.
 
+## [v1.0.2] — 2026-07-27
+
+### Added
+- Added self-hosted version and license badges; wired a badges job into pipeline.yml.
+
 ## [v1.0.1] — 2026-07-26
 
 ### Fixed

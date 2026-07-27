@@ -1,5 +1,8 @@
 # persistent-sshfs
 
+[![version](https://raw.githubusercontent.com/psyb0t/persistent-sshfs/badges/version.svg)](https://github.com/psyb0t/persistent-sshfs/releases)
+[![license](https://raw.githubusercontent.com/psyb0t/persistent-sshfs/badges/license.svg)](LICENSE)
+
 Welcome to the chaotic depths of `persistent-sshfs`, where stability meets anarchy, and your SSHFS mounts cling to your server like a rebel to a cause. No more do we bow down to the tyranny of lost connections and manual remounts; `persistent-sshfs` is here to disrupt the status quo.
 
 ## What Is This Madness?
