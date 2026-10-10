@@ -1,0 +1,4 @@
+# Secret scanning: gitleaks' default rules. Release scans cover only the files
+# being committed, so no allowlist is needed.
+[extend]
+useDefault = true
